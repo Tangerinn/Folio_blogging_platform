@@ -1,0 +1,226 @@
+@import "tailwindcss";
+
+/* Design tokens from DESIGN.md (Sylvan Folio, light mode) */
+@theme {
+  --color-surface: #faf9f5;
+  --color-surface-dim: #dbdad6;
+  --color-surface-bright: #faf9f5;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-low: #f4f4f0;
+  --color-surface-container: #efeeea;
+  --color-surface-high: #e9e8e4;
+  --color-surface-highest: #e3e2df;
+  --color-on-surface: #1b1c1a;
+  --color-on-surface-variant: #434840;
+  --color-outline: #74796f;
+  --color-outline-variant: #c4c8bd;
+  --color-surface-tint: #4d6546;
+  --color-primary: #344b2e;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #4b6344;
+  --color-on-primary-container: #c2deb7;
+  --color-secondary: #4d653f;
+  --color-secondary-container: #cfebba;
+  --color-on-secondary-container: #536b44;
+  --color-tertiary: #354a34;
+  --color-tertiary-container: #4c624a;
+  --color-on-tertiary-container: #c3dcbe;
+  --color-error: #ba1a1a;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+  --color-moss: #4b6344;
+  --color-pine: #1a2e1a;
+  --color-sage: #8ca67a;
+  --color-fern: #2d4a2d;
+  --color-parchment: #faf9f5;
+  --color-moonlit-sage: #c2d1b8;
+
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-sans: "Inter", system-ui, sans-serif;
+
+  --radius-field: 0.5rem;
+  --radius-btn: 0.75rem;
+  --radius-panel: 1.5rem;
+
+  --container-reading: 720px;
+}
+
+html {
+  background: var(--color-surface);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--color-on-surface);
+  background-color: var(--color-surface);
+  background-image:
+    radial-gradient(circle at 12% 0%, rgba(140, 166, 122, 0.11) 0%, transparent 45%),
+    radial-gradient(circle at 88% 12%, rgba(75, 99, 68, 0.07) 0%, transparent 40%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Global low-opacity paper grain */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+::selection {
+  background: var(--color-secondary-container);
+}
+
+/* Subtle field-notebook graph grid for botanical sanctuary framing */
+.bg-field-grid {
+  background-image:
+    linear-gradient(to right, rgba(75, 99, 68, 0.065) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(75, 99, 68, 0.065) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Accessibility utilities */
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  background: var(--color-moss);
+  color: var(--color-parchment);
+  padding: 0.75rem 1.25rem;
+  border-radius: var(--radius-btn);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+  outline: 2px solid var(--color-pine);
+  outline-offset: 2px;
+}
+
+/* Native <dialog> modal scroll containment and styling */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  background: rgba(26, 46, 26, 0.45);
+  backdrop-filter: blur(2px);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+/* Form validation only after interaction */
+.folio-field:is(:user-invalid, .user-invalid-fallback) {
+  border-color: var(--color-error);
+  background-color: var(--color-surface);
+}
+
+/* Shared styling for the editor and the rendered post body */
+.prose-folio {
+  font-size: 18px;
+  line-height: 1.7;
+  color: var(--color-on-surface);
+}
+.prose-folio > * + * {
+  margin-top: 1.25em;
+}
+.prose-folio h1,
+.prose-folio h2,
+.prose-folio h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 1.8em;
+  color: var(--color-pine);
+}
+.prose-folio h1 { font-size: 2rem; }
+.prose-folio h2 { font-size: 1.75rem; }
+.prose-folio h3 { font-size: 1.4rem; font-weight: 600; }
+.prose-folio a {
+  color: var(--color-moss);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.prose-folio ul { list-style: disc; padding-left: 1.5em; }
+.prose-folio ol { list-style: decimal; padding-left: 1.5em; }
+.prose-folio li + li { margin-top: 0.4em; }
+.prose-folio blockquote {
+  border-left: 3px solid var(--color-sage);
+  padding: 0.25em 0 0.25em 1.25em;
+  color: var(--color-on-surface-variant);
+  font-style: italic;
+  background: rgba(140, 166, 122, 0.08);
+  border-radius: 0 0.5rem 0.5rem 0;
+}
+.prose-folio code {
+  background: var(--color-surface-container);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+}
+.prose-folio pre {
+  background: var(--color-pine);
+  color: var(--color-moonlit-sage);
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+  overflow-x: auto;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.prose-folio pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+}
+.prose-folio img {
+  max-width: 100%;
+  border-radius: 0.75rem;
+  display: block;
+  margin: 0 auto;
+}
+.prose-folio figure { margin: 2em 0; }
+.prose-folio figcaption {
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--color-on-surface-variant);
+  margin-top: 0.5em;
+}
+.prose-folio hr {
+  border: 0;
+  border-top: 1px solid var(--color-outline-variant);
+  margin: 2em 0;
+}
+
+/* TipTap editor surface */
+.ProseMirror { outline: none; min-height: 320px; }
+.ProseMirror p.is-empty:first-child::before { content: none; }
+.ProseMirror img.ProseMirror-selectednode {
+  outline: 2px solid var(--color-sage);
+}
