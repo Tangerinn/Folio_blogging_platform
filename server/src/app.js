@@ -1,47 +1,44 @@
 // src/app.js – Express application bootstrap
-// Loads environment, sets core middle‑wares, and registers placeholder route mounts.
-
-// Environment variables are loaded in server.js before app import
-
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const env = require('./config/env');
+const apiRoutes = require('./routes');
+const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
-// Create Express app
 const app = express();
 
-// Security & utility middle‑wares
-app.use(helmet()); // Basic security headers
+app.use(helmet());
 app.use(morgan('dev'));
-app.use(express.json()); // Parse JSON bodies
-app.use(express.urlencoded({ extended: true })); // Parse URL‑encoded bodies
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// CORS configuration – allow explicit origin if provided, otherwise block all for safety.
-const allowedOrigin = process.env.CORS_ORIGIN || '';
 app.use(
   cors({
-    origin: allowedOrigin || false,
-    credentials: true,
+    origin: env.CORS_ORIGIN || false,
+    exposedHeaders: ['X-Total-Count', 'X-Page', 'X-Limit', 'X-Total-Pages'],
   })
 );
 
-// Rate limiting – generic limiter for all routes; specific limits can be applied per router later.
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per window
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: { code: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' },
+    });
+  },
 });
 app.use('/api/', apiLimiter);
 
-// Health‑check endpoint
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
-// Placeholder route mounts – actual route files will be added later.
-// Example: const authRouter = require('./routes/auth');
-// app.use('/api/auth', authRouter);
+app.use('/api', apiRoutes);
+app.use('/api', notFoundHandler);
+app.use(errorHandler);
 
 module.exports = app;
-
