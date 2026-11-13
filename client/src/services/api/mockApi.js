@@ -2,7 +2,8 @@
 // database.md). Data persists in localStorage so you can click around freely.
 // Reset it any time with:  localStorage.clear()  in the browser console.
 import { seed } from './mockSeed.js';
-import { isEmptyDoc, isSafeUrl } from '../../utils/content.js';
+import { extractText, isEmptyDoc, isSafeImageSrc } from '../../utils/content.js';
+import { readImageFile } from '../../utils/imageUpload.js';
 
 const DB_KEY = 'folio_mock_db_v1';
 const SESSION_KEY = 'folio_mock_session';
@@ -82,17 +83,19 @@ const validatePostInput = ({ title, content, categoryId }, publishing) => {
     if (!categoryId || !categoryOf(categoryId)) throw new ApiError(400, 'VALIDATION_ERROR', 'Choose a category before publishing.');
     if (isEmptyDoc(content)) throw new ApiError(400, 'VALIDATION_ERROR', 'Write something before publishing.');
   }
-  // Mirrors the server rule: image nodes must be http(s) URLs (security.md §10)
+  // Mirrors the server rule: image nodes must be http(s) URLs or safe raster image data URLs
   const walk = (n) => {
     if (!n) return;
-    if (n.type === 'image' && !isSafeUrl(n.attrs?.src)) throw new ApiError(400, 'VALIDATION_ERROR', 'Images must use an http(s) URL.');
+    if (n.type === 'image' && !isSafeImageSrc(n.attrs?.src)) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Images must be a valid uploaded image or http(s) URL.');
+    }
     (n.content || []).forEach(walk);
   };
   walk(content);
 };
 
 const matches = (text, q) => text.toLowerCase().includes(q.toLowerCase());
-const postText = (p) => `${p.title} ${JSON.stringify(p.content).replace(/"[a-zA-Z]+":/g, ' ')}`;
+const postText = (p) => `${p.title} ${extractText(p.content)}`;
 
 // ---------- API ----------
 export const mockApi = {
@@ -280,6 +283,12 @@ export const mockApi = {
     db.reports.push({ id: newId('r'), reporterId: me.id, targetType, targetId, reason: reason.trim(), status: 'pending', createdAt: now() });
     save();
     return reply({ ok: true });
+  },
+
+  async uploadImage(file) {
+    requireUser();
+    const dataUrl = await readImageFile(file);
+    return reply({ url: dataUrl });
   },
 
   // profiles (assumed endpoints — see README "gaps in api.md")

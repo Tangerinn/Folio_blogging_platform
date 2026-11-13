@@ -1,4 +1,4 @@
-import { isSafeUrl } from '../../utils/content.js';
+import { isSafeImageSrc, isSafeUrl } from '../../utils/content.js';
 
 // Renders structured editor JSON as React elements. No dangerouslySetInnerHTML anywhere
 // (security.md §10): unknown node types render nothing, and only http(s) URLs are used.
@@ -35,7 +35,7 @@ function Node({ node }) {
     case 'horizontalRule': return <hr />;
     case 'image': {
       const { src, alt, title } = node.attrs || {};
-      if (!isSafeUrl(src)) return null;
+      if (!isSafeImageSrc(src)) return null;
       return (
         <figure>
           <img src={src} alt={alt || ''} loading="lazy" referrerPolicy="no-referrer" />

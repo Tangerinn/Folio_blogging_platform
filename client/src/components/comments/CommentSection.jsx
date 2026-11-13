@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { api } from '../../services/api/index.js';
+import { api, isMock } from '../../services/api/index.js';
 import { useAuth } from '../../state/AuthContext.jsx';
+import { useNotifications } from '../../state/NotificationsContext.jsx';
 import { useAsync } from '../../hooks/useAsync.js';
 import { Avatar, Button, ConfirmModal, ErrorNote, Field, Spinner, Textarea } from '../common/ui.jsx';
 import ReportModal from '../common/ReportModal.jsx';
@@ -172,8 +173,53 @@ function CommentItem({ c, isReply, onChanged, canReply }) {
 
 export default function CommentSection({ postId, onCountChange }) {
   const { user } = useAuth();
+  const { socket } = useNotifications() || {};
   const location = useLocation();
-  const { data, loading, error, reload } = useAsync(() => api.listComments(postId), [postId]);
+  const { data, loading, error, reload, setData } = useAsync(() => api.listComments(postId), [postId]);
+
+  useEffect(() => {
+    if (!socket || !postId || isMock) return undefined;
+
+    const joinRoom = () => {
+      socket.emit('post:join', { postId });
+    };
+
+    if (socket.connected) {
+      joinRoom();
+    }
+    socket.on('connect', joinRoom);
+
+    const handleNewComment = (incoming) => {
+      if (!incoming || incoming.postId !== postId) return;
+      let added = false;
+      setData((prev) => {
+        if (!Array.isArray(prev)) return prev;
+        if (!incoming.parentId) {
+          if (prev.some((c) => c.id === incoming.id)) return prev;
+          added = true;
+          return [...prev, { ...incoming, replies: incoming.replies || [] }];
+        }
+        return prev.map((c) => {
+          if (c.id !== incoming.parentId) return c;
+          const existingReplies = c.replies || [];
+          if (existingReplies.some((r) => r.id === incoming.id)) return c;
+          added = true;
+          return { ...c, replies: [...existingReplies, incoming] };
+        });
+      });
+      if (added) {
+        onCountChange?.();
+      }
+    };
+
+    socket.on('comment:new', handleNewComment);
+
+    return () => {
+      socket.off('connect', joinRoom);
+      socket.off('comment:new', handleNewComment);
+      socket.emit('post:leave', { postId });
+    };
+  }, [socket, postId, setData, onCountChange]);
 
   const changed = () => {
     reload();

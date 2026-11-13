@@ -111,6 +111,9 @@ export default function StudentLayout() {
   const [menu, setMenu] = useState(false);
   const [headerQuery, setHeaderQuery] = useState('');
   const menuRef = useRef(null);
+  const mobileOpenBtnRef = useRef(null);
+  const mobileCloseBtnRef = useRef(null);
+  const mobileFocusFrameRef = useRef(null);
 
   // Sync header search input when on /explore
   useEffect(() => {
@@ -120,12 +123,38 @@ export default function StudentLayout() {
     }
   }, [location.pathname, location.search]);
 
-  // Collapse desktop rail automatically on focused reading/writing/auth views, restore on discovery views
+  // Collapse desktop rail automatically when entering focused views, restore on discovery views
   useEffect(() => {
-    setDesktopRail(!/^\/(posts\/|write|login|register)/.test(location.pathname));
+    setDesktopRail(!isFocusedPage);
+  }, [isFocusedPage]);
+
+  // Close transient overlays on route or query changes
+  useEffect(() => {
     setMobileDrawer(false);
     setMenu(false);
   }, [location.pathname, location.search]);
+
+  useEffect(() => () => {
+    if (mobileFocusFrameRef.current) cancelAnimationFrame(mobileFocusFrameRef.current);
+  }, []);
+
+  const openMobileDrawer = () => {
+    setMobileDrawer(true);
+    if (mobileFocusFrameRef.current) cancelAnimationFrame(mobileFocusFrameRef.current);
+    mobileFocusFrameRef.current = requestAnimationFrame(() => {
+      mobileCloseBtnRef.current?.focus({ preventScroll: true });
+    });
+  };
+
+  const closeMobileDrawer = ({ restoreFocus = true } = {}) => {
+    setMobileDrawer(false);
+    if (mobileFocusFrameRef.current) cancelAnimationFrame(mobileFocusFrameRef.current);
+    if (restoreFocus) {
+      mobileFocusFrameRef.current = requestAnimationFrame(() => {
+        mobileOpenBtnRef.current?.focus({ preventScroll: true });
+      });
+    }
+  };
 
   useEffect(() => {
     if (!menu && !mobileDrawer) return;
@@ -135,7 +164,7 @@ export default function StudentLayout() {
     const onKeyDown = (e) => {
       if (e.key === 'Escape') {
         setMenu(false);
-        setMobileDrawer(false);
+        if (mobileDrawer) closeMobileDrawer({ restoreFocus: true });
       }
     };
     document.addEventListener('pointerdown', onPointerDown);
@@ -171,6 +200,7 @@ export default function StudentLayout() {
             onClick={() => setDesktopRail((v) => !v)}
             aria-label={desktopRail ? 'Hide navigation sidebar' : 'Show navigation sidebar'}
             aria-expanded={desktopRail}
+            aria-controls="desktop-nav-rail"
             className="hidden rounded-field p-2 text-on-surface-variant transition hover:bg-surface-container hover:text-pine xl:inline-flex focus:outline-none focus-visible:ring-2 focus-visible:ring-moss"
           >
             <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -180,8 +210,9 @@ export default function StudentLayout() {
 
           {/* Mobile/tablet drawer toggle */}
           <button
+            ref={mobileOpenBtnRef}
             type="button"
-            onClick={() => setMobileDrawer((v) => !v)}
+            onClick={() => (mobileDrawer ? closeMobileDrawer({ restoreFocus: true }) : openMobileDrawer())}
             aria-label={mobileDrawer ? 'Close navigation menu' : 'Open navigation menu'}
             aria-expanded={mobileDrawer}
             aria-controls="mobile-nav-drawer"
@@ -317,50 +348,76 @@ export default function StudentLayout() {
       </header>
 
       {/* Mobile slide-over navigation drawer */}
-      {mobileDrawer && (
-        <div className="fixed inset-0 z-50 flex xl:hidden">
-          <div
-            className="fixed inset-0 bg-pine/35 backdrop-blur-[1px]"
-            aria-hidden="true"
-            onClick={() => setMobileDrawer(false)}
-          />
-          <div
-            id="mobile-nav-drawer"
-            className="relative z-10 flex h-full w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-outline-variant/60 bg-surface"
-          >
-            <div className="flex h-16 items-center justify-between border-b border-outline-variant/50 px-5">
-              <Link to="/" onClick={() => setMobileDrawer(false)} className="inline-flex items-center gap-2 font-display text-2xl font-bold text-pine">
-                <LeafMark className="text-moss" /><span>Folio</span>
-              </Link>
-              <button
-                type="button"
-                aria-label="Close navigation menu"
-                onClick={() => setMobileDrawer(false)}
-                className="rounded-field p-2 text-on-surface-variant hover:bg-surface-container"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="flex-1">
-              <RailContent
-                user={user}
-                isAdmin={isAdmin}
-                categories={cats.data}
-                onNavigate={() => setMobileDrawer(false)}
-              />
-            </div>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Navigation menu"
+        aria-hidden={!mobileDrawer}
+        inert={mobileDrawer ? undefined : ''}
+        className={`fixed inset-0 z-50 flex xl:hidden transition-[visibility] duration-300 motion-reduce:transition-none ${
+          mobileDrawer ? 'visible' : 'invisible pointer-events-none delay-300 motion-reduce:delay-0'
+        }`}
+      >
+        <div
+          className={`fixed inset-0 overscroll-contain bg-pine/35 backdrop-blur-[1px] transition-opacity duration-300 ease-folio motion-reduce:transition-none ${
+            mobileDrawer ? 'opacity-100' : 'opacity-0'
+          }`}
+          aria-hidden="true"
+          onClick={() => closeMobileDrawer({ restoreFocus: true })}
+        />
+        <div
+          id="mobile-nav-drawer"
+          className={`relative z-10 flex h-full w-72 max-w-[85vw] flex-col overflow-y-auto overscroll-contain border-r border-outline-variant/60 bg-surface will-change-transform transition-transform duration-300 ease-folio motion-reduce:transition-none ${
+            mobileDrawer ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
+          <div className="flex h-16 items-center justify-between border-b border-outline-variant/50 px-5">
+            <Link
+              to="/"
+              onClick={() => closeMobileDrawer({ restoreFocus: false })}
+              className="inline-flex items-center gap-2 font-display text-2xl font-bold text-pine"
+            >
+              <LeafMark className="text-moss" /><span>Folio</span>
+            </Link>
+            <button
+              ref={mobileCloseBtnRef}
+              type="button"
+              aria-label="Close navigation menu"
+              onClick={() => closeMobileDrawer({ restoreFocus: true })}
+              className="rounded-field p-2 text-on-surface-variant hover:bg-surface-container focus:outline-none focus-visible:ring-2 focus-visible:ring-moss"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="flex-1">
+            <RailContent
+              user={user}
+              isAdmin={isAdmin}
+              categories={cats.data}
+              onNavigate={() => closeMobileDrawer({ restoreFocus: false })}
+            />
           </div>
         </div>
-      )}
+      </div>
 
       <div className="mx-auto flex w-full max-w-[1360px] flex-1">
-        {desktopRail && (
-          <aside className="hidden w-56 shrink-0 border-r border-outline-variant/50 xl:block">
-            <div className="sticky top-16 h-[calc(100vh-4rem)] overflow-y-auto">
-              <RailContent user={user} isAdmin={isAdmin} categories={cats.data} />
-            </div>
-          </aside>
-        )}
+        <aside
+          id="desktop-nav-rail"
+          aria-label="Sidebar navigation"
+          aria-hidden={!desktopRail}
+          inert={desktopRail ? undefined : ''}
+          className={`hidden shrink-0 overflow-x-clip transition-[width,opacity] duration-300 ease-folio motion-reduce:transition-none xl:block ${
+            desktopRail ? 'w-56 opacity-100' : 'w-0 opacity-0 pointer-events-none'
+          }`}
+        >
+          <div
+            className={`sticky top-16 h-[calc(100vh-4rem)] w-56 overflow-y-auto border-r border-outline-variant/50 will-change-transform transition-transform duration-300 ease-folio motion-reduce:transition-none ${
+              desktopRail ? 'translate-x-0' : '-translate-x-full'
+            }`}
+          >
+            <RailContent user={user} isAdmin={isAdmin} categories={cats.data} />
+          </div>
+        </aside>
 
         <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 focus:outline-none">
           <Outlet />

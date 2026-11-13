@@ -25,5 +25,14 @@ export function useAsync(fn, deps = []) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => run(), deps);
 
-  return { ...state, reload: run, setData: (data) => setState((s) => ({ ...s, data })) };
+  const setData = useCallback(
+    (dataOrUpdater) =>
+      setState((s) => ({
+        ...s,
+        data: typeof dataOrUpdater === 'function' ? dataOrUpdater(s.data) : dataOrUpdater,
+      })),
+    []
+  );
+
+  return { ...state, reload: run, setData };
 }

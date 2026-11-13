@@ -16,15 +16,16 @@ const qs = (params = {}) => {
 };
 
 async function raw(method, path, body, token) {
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
   let res;
   try {
     res = await fetch(`${BASE}${path}`, {
       method,
       headers: {
-        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(body !== undefined && !isForm ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: body !== undefined ? (isForm ? body : JSON.stringify(body)) : undefined,
     });
   } catch {
     throw new ApiError(0, 'NETWORK_ERROR', 'Unable to reach the server. Please check your connection.');
@@ -114,6 +115,12 @@ export const realApi = {
 
   createReport: (b) => request('POST', '/reports', b),
 
+  uploadImage: (file) => {
+    const form = new FormData();
+    form.append('image', file);
+    return request('POST', '/uploads/image', form);
+  },
+
   getProfile: (id) => request('GET', `/users/${id}`), // (assumed)
   updateProfile: (b) => request('PATCH', '/users/me', b), // (assumed)
 
@@ -126,3 +133,27 @@ export const realApi = {
   adminUpdateCategory: (id, b) => request('PATCH', `/admin/categories/${id}`, b),
   adminDeleteCategory: (id) => request('DELETE', `/admin/categories/${id}`),
 };
+
+export function getAccessToken() {
+  return get(TOKEN_KEY);
+}
+
+export async function refreshAccessToken() {
+  try {
+    return await refresh();
+  } catch (err) {
+    set(TOKEN_KEY, null);
+    set(REFRESH_KEY, null);
+    throw err;
+  }
+}
+
+export function getSocketUrl() {
+  const explicit = import.meta.env?.VITE_SOCKET_URL;
+  if (explicit) return explicit;
+  try {
+    return new URL(BASE).origin;
+  } catch {
+    return 'http://localhost:5000';
+  }
+}
