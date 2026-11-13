@@ -1,100 +1,104 @@
 # Folio
 
-A student-focused platform for publishing, discovering, and discussing academic content, project experiences, tutorials, and practical insights.
+A student-focused blogging platform for publishing, discovering, and discussing academic content, project experiences, tutorials, and practical insights.
+
+- **Live App:** https://folio-client.onrender.com
+- **API Base:** https://folio-blogging-platform.onrender.com/api
 
 ## Features
 
 **For Students**
-- Register, log in, and manage profiles.
-- Create, edit, save drafts, publish, and delete blog posts.
-- Browse, search, and filter published articles.
-- Read articles and participate in discussions.
-- Comment and reply in one-level threads.
+- Register, log in (JWT access & refresh tokens), and manage profiles.
+- Write and edit posts with a TipTap rich-text editor, image uploads via Cloudinary, drafts, and publishing.
+- Browse, search, and filter published articles by category and sort order.
+- Comment and reply in one-level threads with real-time updates via Socket.IO.
 - Bookmark and manage saved posts.
-- Receive notifications for comments and replies.
-- Report inappropriate content.
+- Receive real-time notifications for comments and replies.
+- Report inappropriate posts or comments.
 
 **For Administrators**
 - View platform activity and statistics.
-- Manage registered users.
-- Review reported posts and comments.
-- Remove content or dismiss reports.
+- Manage registered users (activate/suspend).
+- Review reported posts and comments, remove content, or dismiss reports.
 - Create, edit, and delete categories.
 
 ## Tech Stack
 
 | Layer | Technologies |
 |---|---|
-| Frontend | React, Vite, Tailwind CSS |
-| Backend | Node.js, Express.js |
-| Database | MongoDB, Mongoose |
+| Frontend | React 18, Vite, Tailwind CSS, React Router, TipTap, Socket.IO Client |
+| Backend | Node.js, Express 5, Socket.IO, Helmet, Express Rate Limit |
+| Database | MongoDB Atlas, Mongoose |
 | Authentication | JWT, bcrypt |
-| API Testing | Postman |
-| Version Control | Git, GitHub |
-| Deployment | Docker, GitHub Actions (planned) |
-
-## Architecture
-
-The application follows a client-server architecture.
-
-- **Client:** React application handling UI, routing and state.
-- **Server:** Express REST API handling business logic, authentication and data operations.
-- **Database:** MongoDB for persistent application data.
-
-The frontend currently supports a centralized mock API, with a separate API layer for future backend integration.
+| Media Storage | Cloudinary, Multer |
+| Testing | Node.js built-in test runner (`node --test`) |
+| Deployment | Render (Static Site + Web Service) |
 
 ## Project Structure
 
 ```text
 Folio_blogging_platform/
-├── client/       # React frontend
-├── server/       # Express backend
-├── docs/         # Product, design and technical documentation
+├── client/       # React + Vite frontend
+├── server/       # Express + Socket.IO backend
+├── docs/         # Product, design, and technical documentation
 └── README.md
 ```
 
 ## Getting Started
 
 ### Prerequisites
-- Node.js
+- Node.js (v18+ recommended)
 - npm
-- MongoDB Atlas account or local MongoDB instance
+- MongoDB Atlas cluster (or local MongoDB instance)
+- Cloudinary account (for image uploads)
 
-### Frontend
-
-```bash
-cd client
-npm install
-npm run dev
-```
-
-### Backend
+### 1. Backend Setup
 
 ```bash
 cd server
 npm install
+cp .env.example .env
+```
+
+Configure `server/.env` with your `MONGODB_URI`, `JWT_ACCESS_SECRET`, `CORS_ORIGIN` (e.g., `http://localhost:5173`), and Cloudinary credentials.
+
+Optional — seed demo users, categories, posts, and comments:
+```bash
+npm run seed
+```
+
+Start the development server:
+```bash
 npm run dev
 ```
 
-Configure environment variables using the respective `.env.example` files before running the application.
+Run backend tests:
+```bash
+npm test
+```
 
-## Product Scope
+### 2. Frontend Setup
 
-The platform focuses on student publishing, content discovery, discussions and lightweight moderation.
+```bash
+cd client
+npm install
+cp .env.example .env
+```
 
-Private messaging, user following, advanced recommendations, multi-level comment threads and real-time notifications are outside the current scope.
+In `client/.env`:
+- Set `VITE_USE_MOCK=false` and `VITE_API_URL=http://localhost:5000/api` to connect to your local backend.
+- Or set `VITE_USE_MOCK=true` to run the frontend standalone with built-in mock data.
+
+Start the Vite dev server:
+```bash
+npm run dev
+```
+
+## Deployment (Render)
+
+- **Backend (`server/`)**: Deployed as a Render **Web Service** (`npm install` / `npm start`, health check `/health`) with `MONGODB_URI`, `JWT_ACCESS_SECRET`, `CORS_ORIGIN`, and Cloudinary environment variables.
+- **Frontend (`client/`)**: Deployed as a Render **Static Site** (`npm install && npm run build`, publish directory `dist`) with `VITE_USE_MOCK=false`, `VITE_API_URL`, and a `/* -> /index.html` rewrite rule for client-side routing.
 
 ## Documentation
 
-Additional project documentation is available in `docs/`, covering:
-- Product requirements
-- System architecture
-- Database design
-- API contracts
-- UI/UX design
-- Development conventions
-- Security considerations
-
-## Project Status
-
-Frontend implementation is undergoing stabilization and verification. Backend integration, database persistence, testing and deployment are planned next.
+Additional design and technical documentation is available in `docs/`, covering product requirements, system architecture, database design, API contracts, UI/UX design, and security considerations.
