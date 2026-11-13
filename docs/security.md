@@ -64,7 +64,9 @@ Controller
 
 Input/param validation happens before the authorization/ownership check shown above (validation must run on a request's params before those params are used to fetch a resource for an ownership check) — see `api.md` §2 for the full request pipeline order.
 
-The exact token transport mechanism (header vs. cookie) is not specified in the current sources and remains a decision. Whichever is chosen determines the CORS configuration in §12.
+Token transport is settled on **header-based Bearer tokens**: access tokens are sent in `Authorization: Bearer <accessToken>`, and refresh tokens are sent in the JSON request body to `POST /auth/refresh` and `POST /auth/logout` (matching `realApi.js` and `§13`).
+
+Protected requests reject users whose `User.status === 'suspended'` (`403 ACCOUNT_SUSPENDED`) as well as missing, malformed, or expired tokens (`401 UNAUTHENTICATED`).
 
 ## 4. Authorization
 
@@ -83,27 +85,33 @@ Examples:
 - Student can modify only their own content.
 - Admin-only management/moderation routes require the admin role.
 - Frontend-hidden buttons are not sufficient protection.
+- **Profile update allowlist (`PATCH /users/me`):** Authenticated users can modify only their own `name` (`1..80` chars) and `bio` (`<= 300` chars). Client-supplied `role`, `status`, `email`, or password fields are strictly ignored/stripped, preventing privilege escalation.
+- **Public author profiles (`GET /users/:id`):** Exposes only non-sensitive author details (`id`, `name`, `bio`, `createdAt`) and their published posts. Sensitive account fields (`email`, `role`, `status`, `passwordHash`) are never leaked. Suspended users return `404 RESOURCE_NOT_FOUND`.
+- **Bookmark access control:** Adding a bookmark (`POST /posts/:id/bookmark`) verifies that the post is accessible to the user (published, or a draft authored by the caller / viewed by admin). Bookmarks are isolated per user and cannot be inspected by other non-admin users. Deleting a post cascades to remove all associated bookmarks.
 
 ## 5. Input and Data Safety
 
-Validate user-controlled input before business logic. Apply appropriate output handling for user-generated content.
+Validate user-controlled input at the API boundary before business logic executes, and apply safe output handling for user-generated content.
 
-The current sources require input validation but do not specify the exact validation library; that remains an implementation decision. Rich-text/content-node validation is specified in §10 below.
+Request validation uses **Zod** schemas (params, query parameters, and request bodies). Rich-text/content-node and image-upload validation is specified in §10 below.
 
 ## 6. Secrets
 
 Keep secrets outside source control using environment configuration.
 
-At minimum, secrets/configuration should not be hard-coded:
+Required secrets and environment configuration:
 
 ```text
-JWT access-token secret
-JWT refresh-token secret
-Database credentials / connection configuration
-Deployment secrets
+MONGODB_URI
+CORS_ORIGIN
+JWT_ACCESS_SECRET
+JWT_REFRESH_SECRET
+CLOUDINARY_CLOUD_NAME
+CLOUDINARY_API_KEY
+CLOUDINARY_API_SECRET
 ```
 
-Exact environment variable names are implementation-specific.
+See `development.md` §4 for the full backend/frontend variable list.
 
 ## 7. API Security Rules
 
@@ -135,11 +143,18 @@ Moderation actions should be authenticated and admin-authorized.
 
 The current architecture does not define a full security/observability platform. Advanced controls should be added only when requirements justify them.
 
-## 10. Content/Input security
+## 10. Content/Input security & Image Uploads
 
-Post content is stored as structured editor JSON. The server validates the document structure, allowed node types, attributes, and URLs before storage. Arbitrary HTML, scripts, event handlers, and unsupported embedded content must not be permitted.
+Post content is stored as structured TipTap/ProseMirror JSON. The server validates the document structure, allowed node types (`doc`, `paragraph`, `heading`, `text`, `bulletList`, `orderedList`, `listItem`, `blockquote`, `codeBlock`, `hardBreak`, `horizontalRule`, `image`), allowed marks (`bold`, `italic`, `strike`, `code`, `link` with `http`/`https` `attrs.href`), attributes, and URLs before storage. Arbitrary HTML, scripts, event handlers, and unsupported embedded content are rejected (`400 VALIDATION_ERROR`).
 
-Image nodes reference an externally-hosted URL only (see `DESIGN.md`, `database.md`). The server validates that the URL is well-formed and uses an allowed scheme (`http`/`https`); the platform does not accept or store uploaded image files in the current scope.
+**Image storage and URL validation:**
+
+- **External URLs and Cloudinary-hosted URLs:** In `Post.content`, `image.attrs.src` must be a valid `http://` or `https://` URL. On the Express backend, `data:` Base64 URIs, `javascript:` URIs, and relative paths are **rejected** (`400 VALIDATION_ERROR`). *(The frontend's `data:image/*` helper is an offline mock-mode fallback only.)*
+- **Dedicated upload endpoint (`POST /api/uploads/image`):** Authenticated users upload image files via `multipart/form-data` (field `image`) rather than embedding Base64 payloads inside `POST /api/posts`.
+  - Allowed MIME types and magic-byte verified formats: `image/png`, `image/jpeg`, `image/webp`, `image/gif`. SVG (`image/svg+xml`) and non-image files are strictly rejected to prevent stored XSS.
+  - Server-side file size cap: **5 MB** per uploaded file (compatible with client pre-resize optimization in `imageUpload.js`).
+  - Uploaded files are streamed directly to **Cloudinary** (folder `folio/posts/`), never written permanently to Express server disk or MongoDB, and the endpoint returns `{ url, publicId, width, height }` with a `https://` URL.
+- **Express JSON limit:** `express.json()` retains a small JSON body limit (e.g., `100kb`–`256kb`), preventing large payload DoS on JSON routes since image binaries never pass through JSON endpoints.
 
 ## 11. JWT Expiration and Refresh
 
@@ -152,13 +167,21 @@ Image nodes reference an externally-hosted URL only (see `DESIGN.md`, `database.
 
 ## 12. Rate Limiting
 
-`/auth/login` and `/auth/register` must be rate-limited (e.g., per-IP and/or per-account) to reduce brute-force and automated-registration risk. Exact limits/window and library are an implementation decision; this section only establishes that the control must exist.
+- Apply strict rate limiting (e.g., per-IP / per-account) to `POST /auth/login`, `POST /auth/register`, and `POST /uploads/image` to mitigate brute-force, account-enumeration, and Cloudinary upload-quota abuse.
+- General `/api/` rate limits must preserve sufficient burst headroom for normal SPA navigation and `NotificationsContext.markAllRead` (which currently issues parallel `PATCH /notifications/:id/read` requests).
 
 ## 13. CORS
 
-The API must configure CORS to allow only the deployed frontend origin(s) — not a wildcard. Whether `credentials: true` (cookie-based CORS) is required depends on the JWT transport decision in §3:
+The API configures CORS to allow only the explicit frontend origin(s) from `CORS_ORIGIN` — never a wildcard (`*`).
 
-- Header-based transport (`Authorization: Bearer <token>`): standard CORS with an explicit origin allowlist; `credentials` mode not required.
-- Cookie-based transport: CORS must set `credentials: true` and the frontend must send requests with credentials included; cookies should be `HttpOnly`, `Secure`, and `SameSite`-scoped appropriately.
+Because Folio uses **header-based Bearer JWT transport** (`Authorization: Bearer <token>`, without cookie credentials):
 
-This decision should be finalized alongside the JWT transport mechanism, not independently.
+- Standard CORS with an explicit `origin` allowlist is used; `credentials: true` is **not** required (and if `credentials` is disabled, `realApi.js` works cleanly with `CORS_ORIGIN` configured).
+- If `CORS_ORIGIN` is unset, `app.js` fails closed (`origin: false`), so `CORS_ORIGIN` must be defined in `.env` for local and deployed environments.
+
+## 14. Real-Time Socket.IO Security
+
+- **Handshake authentication:** Every Socket.IO connection must supply a valid JWT access token in `socket.handshake.auth.token`. The server verifies the signature/expiry using `JWT_ACCESS_SECRET` and loads the user from MongoDB; missing, invalid, expired (`UNAUTHENTICATED`), or suspended (`ACCOUNT_SUSPENDED`) users are rejected before `connection` fires. Client-supplied user IDs are never trusted.
+- **Room isolation:** On connection, the socket is automatically joined only to `user:<authenticatedUserId>`. Clients can join `post:<postId>` rooms only through the `post:join` event after the server validates the ObjectId and confirms the post has `status === 'published'` (drafts cannot be joined).
+- **CORS:** Socket.IO restricts `cors.origin` to `CORS_ORIGIN` (failing closed when unset), matching Express.
+- **Token expiry handling:** When a client receives a `connect_error` with `UNAUTHENTICATED`, it refreshes the access token once via `POST /api/auth/refresh` and reconnects without looping.

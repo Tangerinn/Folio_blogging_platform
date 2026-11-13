@@ -67,7 +67,7 @@ The administrator maintains platform quality and activity by:
 
 The current source material does not define requirements for features such as private messaging, following users, reactions/likes as a core requirement, advanced recommendation algorithms, or multi-level comment threads. These should not be added without a new product decision.
 
-Real-time notification delivery and image file upload/hosting are explicitly not part of the current scope — see §10 for the rationale behind each.
+Real-time notification delivery is explicitly not part of the current scope — see §10 for the rationale. Image insertion supports both external `http(s)` image URLs and uploaded images hosted via Cloudinary (specification in `api.md`, `database.md`, and `security.md` §10).
 
 The wireframes contain some additional visual concepts such as tags, featured images, trending discussions, popular tags, and discussion/resource navigation. Their exact functional behavior is not defined in Experiment 0, so they are treated as **UI concepts pending confirmation**, not mandatory requirements (tracked in §12).
 
@@ -126,7 +126,7 @@ Administrators use a persistent admin layout to monitor activity and perform mod
 3. **Registration** — account creation form for new users.
 4. **Explore / Search** — search, category filtering, sorting, result list, and post discovery.
 5. **Blog Post** — complete article, author information, metadata, bookmark/report actions, comments, and replies.
-6. **Create Blog** — users create blog posts using a rich-text editor supporting formatted text, headings, lists, links, code blocks, and images. Images are inserted by URL only — the platform does not accept image file uploads in the current scope (editor mechanics in `DESIGN.md`'s Rich Text Editor section).
+6. **Create Blog** — users create blog posts using a rich-text editor supporting formatted text, headings, lists, links, code blocks, and images. Images can be inserted via an external URL or uploaded from the user's device (stored via Cloudinary in production, storing only the resulting HTTPS URL in the post document; upload rules in `api.md` and `security.md` §10, editor mechanics in `DESIGN.md`'s Rich Text Editor section).
 7. **Edit Blog** — existing post editing with draft and update actions.
 8. **My Posts / Dashboard** — published/draft views with post status, dates, comment counts, and edit/delete actions.
 9. **User Profile** — profile information, published posts, and recently saved content.
@@ -247,9 +247,9 @@ Reporting, review, dismissal/removal, user management, and category management p
 
 Experiment 0 explicitly limits notifications to page-load/fetch refresh rather than real-time push to keep the project scope manageable. No notification requirement in §7 depends on real-time delivery, so it is not part of the implementation (`architecture.md` §11).
 
-### No image upload infrastructure
+### Cloudinary-backed image uploads + URL references
 
-Images are inserted into posts by external URL rather than platform upload. This is a product-scope decision, not just an engineering convenience: it avoids the product depending on file-storage infrastructure that nothing else in this document requires.
+Images can be inserted either by pasting an external URL or uploading an image file from the user's device. Uploaded files are routed to Cloudinary rather than stored in MongoDB or local server disk, so post documents stay compact (HTTPS URLs only), Express JSON payloads stay small, and no custom file-storage server is required (`api.md` §4, `security.md` §10).
 
 ## 11. Implementation Stack (Reference Only)
 

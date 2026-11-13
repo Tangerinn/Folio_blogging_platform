@@ -17,16 +17,17 @@ Admins manage users, categories, reports/content moderation, and basic platform 
 ## Current Stack
 
 ```text
-Frontend   React.js + Tailwind CSS
-Backend    Node.js + Express.js
+Frontend   React.js + Tailwind CSS (React Context API)
+Backend    Node.js + Express.js (Zod validation)
 Database   MongoDB + Mongoose
-Auth       JWT (access + refresh) + bcrypt
+Auth       JWT Bearer (access + refresh) + bcrypt
+Media      Cloudinary (post image uploads; URLs stored in Post content)
 Infra      Docker + Docker Compose
 CI/CD      GitHub Actions
 API        REST
 ```
 
-State management, deployment target, exact JWT transport mechanism, and search strategy are not finalized. The physical DB schema is settled at the logical level (see `database.md`); exact indexes remain open.
+Deployment target remains open. JWT transport is settled on `Authorization: Bearer` headers + refresh tokens in request bodies, and keyword search uses a server-maintained `searchText` field in MongoDB. The physical DB schema is settled at the logical level (see `database.md`); exact physical indexes remain open.
 
 ## Core Entities
 
@@ -75,7 +76,7 @@ Do **not** assume these are required:
 - real-time notifications (Socket.IO/WebSockets are not part of the stack)
 - separate microservices
 - dedicated search infrastructure
-- image file upload/hosting (images are inserted via external URL only)
+- local/MongoDB binary file storage (device image uploads go through `POST /api/uploads/image` to Cloudinary, and `Post.content` stores HTTPS URLs only)
 
 Wireframe-only ideas such as tags, featured images, trending discussions, popular tags, and some navigation concepts are not mandatory unless product scope is updated.
 

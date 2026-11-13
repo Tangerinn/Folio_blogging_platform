@@ -4,10 +4,11 @@
 
 ```text
 Frontend      React.js + Tailwind CSS
-State         Redux Toolkit OR React Context API (TBD)
-Backend       Node.js + Express.js
+State         React Context API (AuthContext, NotificationsContext)
+Backend       Node.js + Express.js (Zod request validation)
 Database      MongoDB + Mongoose
-Auth          JWT (access + refresh) + bcrypt
+Auth          JWT Bearer (access + refresh) + bcrypt
+Media         Cloudinary (image uploads via POST /api/uploads/image)
 Containers    Docker + Docker Compose
 CI/CD         GitHub Actions
 Versioning    Git + GitHub
@@ -65,21 +66,26 @@ Required local services/tools follow the supplied stack:
 
 Use environment variables for secrets and environment-specific configuration.
 
-Typical configuration categories:
+Required and standard environment variables:
 
 ```text
-Application environment
-API/server port
-MongoDB connection
-JWT access-token secret/configuration
-JWT refresh-token secret/configuration
-Frontend/API base URL
-Allowed CORS origin(s)
+Backend (server/.env):
+  NODE_ENV               development | production
+  PORT                   5000 (default)
+  MONGODB_URI            MongoDB connection string
+  CORS_ORIGIN            Explicit allowed frontend origin (e.g., http://localhost:5173)
+  JWT_ACCESS_SECRET      Secret for 15m access tokens
+  JWT_REFRESH_SECRET     Secret for refresh tokens
+  CLOUDINARY_CLOUD_NAME  Cloudinary cloud name
+  CLOUDINARY_API_KEY     Cloudinary API key
+  CLOUDINARY_API_SECRET  Cloudinary API secret
+
+Frontend (client/.env):
+  VITE_API_URL           http://localhost:5000/api (default)
+  VITE_USE_MOCK          "true" (offline mock) | "false" (real Express API)
 ```
 
-Exact variable names are TBD.
-
-Never commit secrets to Git.
+Keep `.env.example` synchronized without secret values. Never commit secrets to Git.
 
 ## 5. Docker
 

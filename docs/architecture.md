@@ -55,7 +55,7 @@ Supporting Infrastructure
 └─ Postman
 ```
 
-The architecture intentionally stays simple enough for the current product scope. Features that are not defined as product requirements—such as recommendations, private messaging, likes, following, multi-level discussions, real-time delivery, or image file upload—are not introduced as architectural dependencies.
+The architecture intentionally stays simple enough for the current product scope. Features that are not defined as product requirements—such as recommendations, private messaging, likes, following, or multi-level discussions—are not introduced as architectural dependencies. Real-time notifications and live post comments are layered on top of the REST API via **Socket.IO** attached to the HTTP server in `server.js` (REST endpoints remain the source of truth for initial loads and persistence). Uploaded post images are streamed to Cloudinary (`POST /api/uploads/image`) so MongoDB and Express avoid storing binary files.
 
 ---
 
@@ -70,7 +70,7 @@ The system should:
 5. Support drafts and published posts without requiring separate content systems.
 6. Support one-level comment replies without creating arbitrarily deep threads.
 7. Provide bookmark, notification, reporting, and moderation workflows.
-8. Return notifications through normal page-load/fetch requests in the current scope.
+8. Return notifications through normal page-load/fetch requests and push live updates (`notification:new`, `comment:new`) over authenticated Socket.IO connections.
 9. Remain containerizable and straightforward to deploy through CI/CD.
 10. Allow unresolved implementation choices to be changed without restructuring the entire application.
 
@@ -97,14 +97,7 @@ The frontend must not be treated as the final security boundary. Permissions are
 
 ### 3.2 State Management
 
-The supplied product material leaves the choice between:
-
-- Redux Toolkit
-- React Context API
-
-unresolved.
-
-The architecture therefore uses a generic **client state layer** rather than coupling the design to one library.
+The frontend uses **React Context API** (`AuthContext`, `NotificationsContext`) as its client state layer, avoiding Redux overhead for Folio's scope.
 
 Suggested separation:
 
@@ -148,6 +141,7 @@ Example service modules:
 AuthService
 UserService
 PostService
+UploadService
 CategoryService
 CommentService
 BookmarkService
@@ -305,7 +299,7 @@ Continue to route
 
 When the access token expires, the client calls `POST /auth/refresh` with its refresh token to obtain a new access token. The presented refresh token is checked against its stored hash (`RefreshToken` collection — see `database.md` §3); an expired or revoked refresh token is rejected and requires re-login. `POST /auth/logout` revokes the presented refresh token.
 
-The exact token transport mechanism (header vs. cookie) is an implementation decision and is not specified by the current product material; it also determines the CORS configuration (see `security.md` §13).
+Token transport uses **header-based Bearer JWTs** (`Authorization: Bearer <accessToken>`, with refresh tokens sent in JSON bodies to `POST /auth/refresh` and `POST /auth/logout`), determining the non-cookie `CORS_ORIGIN` configuration in `security.md` §13. Suspended users (`status === 'suspended'`) are rejected during authentication middleware, login, and token refresh.
 
 ### 5.3 Role-Based Authorization
 
@@ -359,11 +353,13 @@ Category
 Post
  ├──────────────< Comment
  ├──────────────< Bookmark
+ ├──────────────< Notification
  └──────────────< Report            (via targetType/targetId)
 
 Comment
  ├──────────────< Comment
  │     (parent comment, maximum one reply level)
+ ├──────────────< Notification      (optional reference)
  └──────────────< Report            (via targetType/targetId)
 ```
 
@@ -390,8 +386,9 @@ Conceptual fields:
 Post
 ├─ title
 ├─ content
+├─ searchText
 ├─ author
-├─ category
+├─ category (nullable on drafts)
 ├─ status
 ├─ created timestamp
 └─ updated/published timestamp data
@@ -404,9 +401,9 @@ draft
 published
 ```
 
-A draft is visible to its author according to the dashboard/editing workflow; published posts participate in public discovery.
+A draft is visible to its author (or an admin) according to the dashboard/editing workflow; published posts participate in public discovery.
 
-`content` is structured editor JSON (see §7's Rich Content Flow and `database.md` §3). Comment counts shown on dashboards are computed at read time, not stored on `Post`.
+`content` is structured TipTap editor JSON (storing external or Cloudinary `https://` image URLs only; see §7's Rich Content Flow and `database.md` §3). `searchText` stores server-extracted plain text for keyword search. Comment counts shown on dashboards and feeds are computed at read time via aggregation, not stored on `Post`.
 
 ### 6.3 Category
 
@@ -453,11 +450,11 @@ Conceptual fields:
 
 ```text
 Notification
-├─ recipient
+├─ recipient → User
 ├─ type
-├─ target
-│   ├─ targetType  ('post' | 'comment')
-│   └─ targetId
+├─ message
+├─ post → Post (serialized as postId)
+├─ comment → Comment (optional)
 ├─ read state
 └─ timestamp
 ```
@@ -469,7 +466,7 @@ comment
 reply
 ```
 
-`target` uses the same `targetType`/`targetId` pattern as `Report` (§6.7), since a notification can point at either a post or a comment.
+Every `comment` and `reply` notification navigates directly to `/posts/:postId`, so `Notification` stores a direct `post` reference (`postId` in API responses) plus an optional `comment` reference rather than a polymorphic `targetType`/`targetId` sub-document (`database.md` §3).
 
 Notifications are fetched/refreshed on page load or normal API fetch rather than delivered through required real-time push.
 
@@ -564,7 +561,7 @@ Delete Post
 Ownership Check
     │
     ▼
-Cascade delete: Comments (incl. replies), Bookmarks, Reports targeting this Post
+Cascade delete: Comments (incl. replies), Bookmarks, Notifications, Reports targeting this Post/Comments
     │
     ▼
 Delete Post
@@ -575,17 +572,19 @@ Delete top-level Comment
 Ownership Check
     │
     ▼
-Cascade delete: its one-level Replies
+Cascade delete: its one-level Replies & Reports targeting them
     │
     ▼
 Delete Comment
 ```
 
+When a post or comment is removed via admin moderation (`PATCH /admin/reports/:id` with `action: "resolve"`), the cascade removes the target content and other reports targeting it while updating and retaining that resolved `Report` record (`status: "resolved"`) for moderation history. Deleting a `Category` is blocked with `409 CONFLICT` if any `Post` references it.
+
 `User` deletion behavior for their authored content is not defined by current product decisions; account suspension via `User.status` is in scope, but hard deletion of a user (and cascading their posts/comments) is out of scope until a product decision is made (see `database.md` §7).
 
 ### Rich Content Flow
 
-The rich-text editor produces structured JSON content. The API validates the content — including that image nodes reference only external URLs, never uploaded files (see `security.md` §10) — before storing it in MongoDB. The reader view renders the validated document into the corresponding visual content.
+The rich-text editor produces structured TipTap JSON content. Image uploads from the user's device go to `POST /api/uploads/image` (validated for MIME/magic bytes and 5 MB limit, then stored on Cloudinary), returning an `https://` URL inserted into the editor's `image` node. On `POST /posts` and `PATCH /posts/:id`, the API validates the TipTap node/mark schema — ensuring `image.attrs.src` uses `http://` or `https://` only (`data:` URIs rejected on the backend; `security.md` §10) — and extracts `searchText` before storing in MongoDB. The reader view (`PostContent.jsx`) renders the validated document safely without `dangerouslySetInnerHTML`.
 
 ---
 
@@ -684,43 +683,28 @@ This makes the user-centric "Saved Posts" view straightforward and avoids modify
 
 ---
 
-## 11. Notification Architecture
+## 11. Notification & Real-Time Architecture
 
-The current product intentionally does not require real-time push notifications.
+*(Updated by explicit product decision: Socket.IO is enabled as an enhancement on top of the REST API.)*
 
-### Current architecture
+### Hybrid REST + Socket.IO flow
 
 ```text
 Comment / Reply Event
         │
-        ▼
-Create Notification document
+        ├─► Persist Comment & Notification in MongoDB
         │
-        ▼
-MongoDB
+        ├─► Emit comment:new       ──► room post:<postId> (published posts)
         │
-        │
+        └─► Emit notification:new  ──► room user:<recipientId> (never to actor)
+
 User opens / refreshes Notifications
-        ▼
-GET notifications
         │
         ▼
-React renders notification list
+GET /api/notifications (source of truth on load)
 ```
 
-Example:
-
-```text
-Student A comments on Student B's post
-            │
-            ▼
-NotificationService
-            │
-            ▼
-Notification(recipient=Student B, type=comment)
-```
-
-Socket.IO/WebSockets are **not part of the current implementation stack**. Real-time delivery is out of scope and would require a new product decision to introduce.
+Socket.IO is attached to the HTTP server in `src/server.js` via `src/realtime/index.js`, with CORS restricted to `CORS_ORIGIN`. Services emit events through `src/realtime/index.js` without importing `socket.io` directly, and real-time emit errors never fail REST requests. In mock mode (`VITE_USE_MOCK=true`), the client skips opening a socket.
 
 ---
 
@@ -765,15 +749,16 @@ The backend must verify that:
 
 ## 13. API Architecture
 
-The API is RESTful. Exact endpoint naming can be finalized during implementation, but the resource structure should follow the product model.
+The API is RESTful, mounted under `/api` (full endpoint specifications and JSON schemas live in `api.md`).
 
-Illustrative endpoint groups:
+Endpoint groups:
 
 ```text
 /auth
 /users
-/posts
 /categories
+/uploads
+/posts
 /comments
 /bookmarks
 /notifications
@@ -781,7 +766,7 @@ Illustrative endpoint groups:
 /admin
 ```
 
-Representative operations:
+Endpoints:
 
 ```text
 Authentication
@@ -790,8 +775,19 @@ POST   /auth/login
 POST   /auth/refresh
 POST   /auth/logout
 
+Users & Profiles
+GET    /users/me
+PATCH  /users/me
+GET    /users/:id
+
+Categories
+GET    /categories
+
+Image Uploads
+POST   /uploads/image
+
 Posts
-GET    /posts
+GET    /posts                 (supports q, category, authorId, sort, limit, mine=true)
 GET    /posts/:id
 POST   /posts
 PATCH  /posts/:id
@@ -827,13 +823,11 @@ PATCH  /admin/categories/:id
 DELETE /admin/categories/:id
 ```
 
-These endpoint names are architectural examples, not additional product requirements.
-
 ---
 
 ## 14. Validation and Error Handling
 
-Validation should occur at the API boundary, after authentication but before ownership checks or business logic execute — consistent with §4's request flow.
+Validation uses **Zod** schemas at the API boundary, after authentication (where required) and before ownership checks or business logic execute — consistent with §4's request flow and `api.md` §2.
 
 ```text
 Request
@@ -870,12 +864,12 @@ Example:
 {
   "error": {
     "code": "RESOURCE_NOT_FOUND",
-    "message": "Post not found"
+    "message": "Post not found."
   }
 }
 ```
 
-The exact error contract can be finalized during implementation.
+The error envelope and standard error codes (`VALIDATION_ERROR`, `REPLY_TO_REPLY`, `UNAUTHENTICATED`, `INVALID_CREDENTIALS`, `FORBIDDEN`, `ACCOUNT_SUSPENDED`, `RESOURCE_NOT_FOUND`, `EMAIL_TAKEN`, `CONFLICT`) are specified in `api.md` §3.
 
 ---
 
@@ -943,7 +937,8 @@ Post
 ├─ author
 ├─ category
 ├─ status
-└─ timestamps
+├─ publishedAt / updatedAt
+└─ title + searchText
 
 Comment
 ├─ post
@@ -955,13 +950,14 @@ Bookmark
 
 Notification
 ├─ recipient
+├─ post
 ├─ read state
-└─ timestamp
+└─ createdAt
 
 Report
 ├─ status
 ├─ target (targetType + targetId)
-└─ timestamp
+└─ createdAt
 
 RefreshToken
 ├─ user
@@ -969,7 +965,7 @@ RefreshToken
 └─ expiresAt (TTL index candidate)
 ```
 
-For search, the implementation should use the search capabilities appropriate to the chosen MongoDB configuration. The current product source does not prescribe a particular search-index strategy.
+For search, the backend maintains `Post.searchText` (plain text extracted from `Post.content` JSON on write) and queries `title` + `searchText` directly in MongoDB without an external search service (`database.md` §6).
 
 ---
 
@@ -1209,7 +1205,7 @@ Architecture should support the defined product instead of creating dependencies
 
 ### Replaceable infrastructure
 
-Unresolved choices such as state management and deployment should be isolated so they do not affect core domain logic.
+Infrastructure choices such as image hosting (Cloudinary), deployment target, and physical index tuning should be isolated so they do not affect core domain logic.
 
 ### Explicit domain rules
 
@@ -1217,20 +1213,24 @@ Rules such as post ownership, valid post states, one-level replies, report state
 
 ---
 
-## 25. Open Architectural Decisions
+## 25. Architectural Decisions Status
 
-The source material explicitly leaves several implementation decisions unresolved:
+Decisions previously left open and now settled vs. remaining deferred choices:
 
-| Decision | Current options / status |
+| Decision | Status & Resolution |
 |---|---|
-| Frontend state management | Redux Toolkit vs React Context API |
-| Deployment | Render vs Vercel not finalized |
-| Physical database indexes | Logical model exists and is settled; physical indexes need refinement |
-| Search implementation | Keyword search is required; exact database search/index strategy is not specified |
-| JWT transport | Access/refresh token issuance and expiry are specified (see `security.md` §11); header vs. cookie transport is not, and determines the CORS configuration |
-| Exact API contract | REST is specified; endpoint naming and response schemas remain implementation decisions |
+| Frontend state management | **Resolved:** React Context API (`AuthContext`, `NotificationsContext`) |
+| JWT transport & CORS | **Resolved:** Header-based `Authorization: Bearer <accessToken>` + refresh token in JSON body; explicit `CORS_ORIGIN` allowlist (`security.md` §3, §13) |
+| Validation strategy | **Resolved:** Zod schema validation + TipTap JSON/URL validation (`api.md` §2, `security.md` §10) |
+| Exact API contract | **Resolved:** Full endpoint routes and JSON shapes defined in `api.md` §4 |
+| Image storage | **Resolved:** Cloudinary upload via `POST /api/uploads/image`; `http(s)` URLs only in `Post.content` (`security.md` §10) |
+| Search implementation | **Resolved:** Server-derived `Post.searchText` queried in MongoDB (`database.md` §6) |
+| Pagination (v1) | **Resolved for v1:** Unwrapped array responses (`GET /posts` supports `limit`); cursor/page pagination deferred unless scale requires it |
+| Deployment target | **Open:** Render vs Vercel (or equivalent) not finalized |
+| Physical database indexes | **Open (non-blocking):** Logical query paths defined in `database.md` §5; exact compound/text index tuning left to implementation |
+| Orphaned Cloudinary assets | **Open (deferred):** Periodic cleanup of images from deleted posts or abandoned drafts is not in v1 scope |
 
-These should be resolved during implementation without changing the core product scope unless a new product decision is made.
+Remaining open items can be resolved during implementation or deployment without changing the core product scope.
 
 ---
 
@@ -1318,7 +1318,7 @@ The design system specifies:
 - Tonal layering instead of heavy shadows.
 - Soft corner radii and tactile buttons/cards.
 - Paper-grain and botanical accents as visual treatments.
-- A structured rich-text editor whose image nodes reference external URLs only (no upload UI).
+- A structured rich-text editor whose image nodes support external `http(s)` URLs or uploaded images stored via Cloudinary (`POST /api/uploads/image`).
 
 These are presentation concerns and should remain in the client/design system layer rather than becoming backend dependencies.
 
@@ -1333,11 +1333,10 @@ The architecture explicitly does **not** require:
 - Likes/reactions as a core feature.
 - Advanced recommendation algorithms.
 - Multi-level threaded discussions.
-- Real-time notifications as a required product behavior (Socket.IO/WebSockets are not part of the stack).
 - A separate microservice for each domain.
 - A dedicated search service.
 - Machine-learning infrastructure.
-- Image file upload/hosting infrastructure (images are external-URL references only).
+- Local-disk or MongoDB-stored binary image files (uploaded images are hosted on Cloudinary and referenced by HTTPS URL).
 
 Such capabilities can be introduced later only through new product decisions.
 
@@ -1348,16 +1347,17 @@ Such capabilities can be introduced later only through new product decisions.
 The recommended architecture is a modular monolith:
 
 ```text
-React + Tailwind
+React + Tailwind (Context API)
        │
-       │ REST
+       │ REST + Bearer JWT
        ▼
-Node.js + Express
+Node.js + Express (Zod validation)
        │
        ├─ Authentication / RBAC (access + refresh tokens)
        ├─ Users
-       ├─ Posts
        ├─ Categories
+       ├─ Image Uploads → Cloudinary
+       ├─ Posts
        ├─ Comments
        ├─ Bookmarks
        ├─ Notifications
@@ -1367,4 +1367,4 @@ Node.js + Express
 MongoDB + Mongoose
 ```
 
-This structure matches the current product scope while leaving state management, deployment, JWT transport, and physical database index details intentionally open. It is substantially simpler than a microservice architecture and is appropriate for the current feature set and supplied implementation constraints.
+This structure settles the API contract, Bearer JWT transport, Cloudinary image upload flow, notification schema, and validation strategy while leaving deployment provider and physical index tuning cleanly decoupled. It is substantially simpler than a microservice architecture and is appropriate for the current feature set and supplied implementation constraints.

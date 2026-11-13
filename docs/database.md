@@ -42,8 +42,9 @@ Status currently defined: `active`, `suspended` (default `active`). This backs `
 Post
 ├─ title
 ├─ content
+├─ searchText   (server-derived plain text for keyword search)
 ├─ author → User
-├─ category → Category
+├─ category → Category (nullable on drafts)
 ├─ status
 ├─ created timestamp
 └─ updated / published timestamp data
@@ -51,9 +52,11 @@ Post
 
 Allowed product states: `draft`, `published`.
 
-`content`: Structured JSON document produced by the rich-text editor. Contains typed nodes for text, formatting, images, links, lists, headings, code blocks, and other supported content. Image nodes store an external URL, alt text, and optional caption only — no uploaded file data (see `DESIGN.md`, `security.md` §10).
+`content`: Structured JSON document produced by the rich-text editor (TipTap/ProseMirror format). Contains typed nodes for text, formatting marks, images, links, lists, headings, code blocks, blockquotes, hard breaks, and horizontal rules. Image nodes store an external or Cloudinary `https://` (`http(s)`) URL in `attrs.src`, optional `alt`, and optional `title` caption — **never** raw binary files or Base64 `data:` strings in MongoDB (`security.md` §10, `api.md` §4).
 
-Comment counts shown on dashboards (e.g., My Posts) are **computed at read time** via aggregation (e.g., `Comment.countDocuments({ post })`), not stored as a denormalized field on `Post`.
+`searchText`: Plain text extracted server-side from `content` on post creation/update so keyword search can query `title` and body text without scanning nested JSON nodes (`§6`).
+
+Comment counts shown on dashboards and feeds are **computed at read time** via aggregation (e.g., `Comment.countDocuments({ post })`), not stored as a denormalized field on `Post`.
 
 ### Category
 
@@ -71,24 +74,31 @@ Managed by administrators.
 Comment
 ├─ post → Post
 ├─ author → User
-├─ content
-├─ timestamp
-└─ parent comment → Comment (optional)
+├─ parentId → Comment (optional, null for top-level comments)
+├─ content (string, trimmed, max 2000 chars)
+├─ createdAt
+└─ updatedAt
 ```
 
-`parent comment = null` means a direct comment. A populated parent means a reply. Replies may not themselves have replies because the product supports one level only.
-
-On reply creation, `post` is derived server-side from the parent comment's `post` field, never taken from client input (see `api.md` §4).
+- `parentId = null` denotes a top-level comment. A populated `parentId` denotes a reply.
+- Replies may not themselves have replies (`400 REPLY_TO_REPLY` enforced on `POST /comments/:id/replies`): the product strictly supports one reply level.
+- On reply creation, `post` is derived server-side from the parent comment's `post` reference, never taken from client input.
+- Deleting a top-level comment cascades to delete all child replies referencing it via `parentId`.
+- Indexes: `{ post: 1, createdAt: 1 }` and `{ parentId: 1, createdAt: 1 }`.
 
 ### Bookmark
 
 ```text
 Bookmark
-├─ user → User
-└─ post → Post
+├─ userId → User (ref: 'User', required)
+├─ postId → Post (ref: 'Post', required)
+└─ timestamps (createdAt, updatedAt)
 ```
 
-Implementation recommendation: enforce uniqueness on `(user, post)` so a user cannot bookmark the same post twice.
+- Enforces compound uniqueness on `{ userId: 1, postId: 1 }` to prevent duplicate bookmarks.
+- Index `{ userId: 1, createdAt: -1 }` optimizes reverse-chronological saved post queries on `GET /api/bookmarks`.
+- Index `{ postId: 1 }` optimizes cascade deletions when posts are deleted.
+- Deleting a `Post` cascades deletion to all `Bookmark` records referencing that `postId`.
 
 ### Notification
 
@@ -97,16 +107,15 @@ Notification
 ├─ recipient → User
 ├─ type
 ├─ message
-├─ target
-│   ├─ targetType  ('post' | 'comment')
-│   └─ targetId    (ObjectId, refPath by targetType)
-├─ read state
-└─ timestamp
+├─ post → Post        (serialized as postId in API responses)
+├─ comment → Comment  (optional, populated for comment/reply context)
+├─ read               (boolean, default false)
+└─ createdAt
 ```
 
 Current notification types: `comment`, `reply`.
 
-The `target` sub-document uses the same `targetType`/`targetId` (Mongoose `refPath`) pattern as `Report.target` below, since a notification about a comment or reply points at a `Comment`, while other notification types could point at a `Post`.
+Because both `comment` and `reply` notifications navigate directly to `/posts/:postId` in the frontend (`Notifications.jsx`), `Notification` stores a direct `post` reference (`postId` in JSON responses) plus an optional `comment` reference instead of a polymorphic `targetType`/`targetId` sub-document. This guarantees consistent navigation links for both comments and replies and lets post deletion cascade directly to notifications via `post`.
 
 Notifications are fetched/refreshed through normal requests; real-time push is not a current product requirement.
 
@@ -152,8 +161,9 @@ User        ──< RefreshToken
 Category    ──< Post
 Post        ──< Comment
 Comment     ──< Comment   (one reply level only)
+Post         ──< Notification
+Comment      ──< Notification  (optional reference)
 Post/Comment ──< Report        (via targetType/targetId)
-Post/Comment ──< Notification  (via targetType/targetId)
 ```
 
 ## 5. Query / Index Considerations
@@ -161,11 +171,11 @@ Post/Comment ──< Notification  (via targetType/targetId)
 The architecture identifies these likely query paths:
 
 ```text
-Post         → author, category, status, timestamps
+Post         → author, category, status, publishedAt / updatedAt, title + searchText
 Comment      → post, parentComment
 Bookmark     → user, user + post uniqueness
-Notification → recipient, read state, timestamp
-Report       → status, target (targetType + targetId), timestamp
+Notification → recipient, post, read state, createdAt
+Report       → status, target (targetType + targetId), createdAt
 RefreshToken → user, tokenHash lookup, expiresAt (TTL index candidate for automatic cleanup of expired tokens)
 ```
 
@@ -173,9 +183,11 @@ These are index candidates, not a finalized physical index plan. Final indexes s
 
 ## 6. Search
 
-Keyword search is required. The current sources do not prescribe the exact MongoDB search/index strategy.
+Keyword search is required across post titles and body text. To query structured TipTap JSON cleanly in MongoDB without introducing an external search service:
 
-Do not introduce a separate search service unless a later decision requires it.
+- The backend extracts plain text from `Post.content` into `Post.searchText` whenever a post is created or updated.
+- Keyword queries (`q`) filter `published` posts by matching against `title` and `searchText` using database-backed queries (escaped case-insensitive regex for substring matching parity with the mock API, or a MongoDB text index if word-stemmed matching is preferred at scale).
+- Do not introduce a separate search service unless a later decision requires it.
 
 ## 7. Important Constraints
 
@@ -183,16 +195,16 @@ Do not introduce a separate search service unless a later decision requires it.
 - Comment nesting is limited to one reply level.
 - Bookmark duplicates should be prevented.
 - Notification types and report statuses should remain constrained to the product-defined values.
+- A `Category` cannot be deleted while any `Post` (`draft` or `published`) still references it (`409 CONFLICT` on `DELETE /admin/categories/:id`).
 - The current database diagram is not considered a finalized physical schema.
 
 **Deletion cascade rules:**
 
-- Deleting a `Post` cascades to its `Comment`s, `Bookmark`s, and any `Report`s that target it.
-- Deleting a top-level `Comment` cascades to its one-level `Reply` comments. (A reply cannot be deleted independently in a way that orphans it, since it has no children by definition.)
+- Deleting a `Post` cascades to its `Comment`s, `Bookmark`s, `Notification`s (`post`), and `Report`s that target that post or its comments — **except** when deletion is triggered by `PATCH /admin/reports/:id` with `action: "resolve"`, in which case the resolved `Report` record itself is updated to `status: "resolved"` and retained for moderation history (while `target` serializes as `null` on `GET /admin/reports?status=resolved`).
+- Deleting a top-level `Comment` cascades to its one-level `Reply` comments and `Report`s targeting them (preserving the active resolved `Report` record when deleted via moderation `resolve`). (A reply cannot be deleted independently in a way that orphans it, since it has no children by definition.)
 - `User` deletion behavior for their authored content (posts, comments, etc.) is not defined by current product decisions and should not be assumed; treat account deletion/deactivation as out of scope until a product decision is made (account **suspension** via `User.status` is in scope — see §3 above — but hard deletion of a user's authored content is not).
 
 ## 8. Open Decisions
 
-- Exact Mongoose field names and BSON types.
-- Exact physical indexes.
-- Search implementation/index strategy.
+- Exact Mongoose field names (where internal, while JSON serialization follows `api.md`) and BSON types.
+- Exact physical indexes (compound vs text index tuning).
